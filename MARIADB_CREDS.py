@@ -1,5 +1,5 @@
 DB_CONFIG = {
-    "username": "username",
+    "username": "joshcaron",
     "password": "password",
     "port": 3306,
     "host": "localhost",

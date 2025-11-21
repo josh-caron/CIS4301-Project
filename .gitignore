@@ -9,3 +9,10 @@ private_tests.py
 DONTPUSHDBHANDLER.py
 Specification.md
 ER.svg
+MARIADB_CREDS.py
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+.Python
