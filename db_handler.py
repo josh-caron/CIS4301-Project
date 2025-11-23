@@ -14,13 +14,35 @@ conn = connect(user=DB_CONFIG["username"], password=DB_CONFIG["password"], host=
 
 cur = conn.cursor()
 
+#helpers -v
+def row_to_user(row) -> User:
+    return User(
+        account_id=row[0],
+        name=row[1],
+        address=row[2],
+        phone_number=row[3],
+        email=row[4],
+    )
+
+
+# helpers -^
 
 def add_book(new_book: Book = None):
     """
     new_book - A Book object containing a new book to be inserted into the DB in the Books table.
         new_book and its attributes will never be None.
     """
-    pass
+    cur.execute(
+        "INSERT INTO Book (isbn, title, author, publication_year, publisher, num_owned) VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            new_book.isbn,
+            new_book.title,
+            new_book.author,
+            new_book.publication_year,
+            new_book.publisher,
+            new_book.num_owned
+        )
+    )
 
 
 def add_user(new_user: User = None):
@@ -28,8 +50,16 @@ def add_user(new_user: User = None):
     new_user - A User object containing a new user to be inserted into the DB in the Users table.
         new_user and its attributes will never be None.
     """
-    pass
-
+    cur.execute(
+        "INSERT INTO User (account_id, name, address, phone_number, email) VALUES (?, ?, ?, ?, ?)",
+        (
+            new_user.account_id,
+            new_user.name,
+            new_user.address,
+            new_user.phone_number,
+            new_user.email
+        )
+    )
 
 def edit_user(original_account_id: str = None, new_user: User = None):
     """
@@ -49,7 +79,10 @@ def checkout_book(isbn: str = None, account_id: str = None):
     isbn - A string containing the ISBN for the book being checked out. isbn will never be None.
     account_id - A string containing the account id of the user checking out a book. account_id will never be None.
     """
-    pass
+    cur.execute(
+        "INSERT INTO Loan (isbn, account_id, checkout_date, due_date) VALUES (?, ?, CURRENT_DATE(), DATE_ADD(CURRENT_DATE(), INTERVAL 14 DAY))",
+        (isbn, account_id)
+    )
 
 
 def waitlist_user(isbn: str = None, account_id: str = None) -> int:
@@ -131,7 +164,44 @@ def get_filtered_users(filter_attributes: User = None, use_patterns: bool = Fals
     returns a list of User objects with users who meet the qualifications of the filters. If no users meet the requirements,
      then an empty list is returned.
     """
-    return []
+    conditions = []
+    parameters = []
+
+    if filter_attributes.account_id is not None:
+        operation = "LIKE" if use_patterns else "="
+        conditions.append(f"account_id {operation} ?")
+        parameters.append(filter_attributes.account_id)
+
+    if filter_attributes.name is not None:
+        operation = "LIKE" if use_patterns else "="
+        conditions.append(f"name {operation} ?")
+        parameters.append(filter_attributes.name)
+
+    if filter_attributes.address is not None:
+        operation = "LIKE" if use_patterns else "="
+        conditions.append(f"address {operation} ?")
+        parameters.append(filter_attributes.address)
+
+    if filter_attributes.phone_number is not None:
+        operation = "LIKE" if use_patterns else "="
+        conditions.append(f"phone_number {operation} ?")
+        parameters.append(filter_attributes.phone_number)
+
+    if filter_attributes.email is not None:
+        operation = "LIKE" if use_patterns else "="
+        conditions.append(f"email {operation} ?")
+        parameters.append(filter_attributes.email)
+
+    query = "SELECT account_id, name, address, phone_number, email FROM User"
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+
+    cur.execute(
+        query, 
+        parameters
+    )
+    rows = cur.fetchall()
+    return [row_to_user(r) for r in rows]
 
 
 def get_filtered_loans(filter_attributes: Loan = None,
@@ -236,7 +306,14 @@ def place_in_line(isbn: str = None, account_id: str = None) -> int:
     returns what place in line the user with the corresponding account_id is in for the book with the corresponding ISBN. If
         the user is not on the waitlist for that book, then -1 should be returned.
     """
-    return 0
+    cur.execute(
+        "SELECT place_in_line FROM Waitlist WHERE isbn = ? AND account_id = ?",
+        (isbn, account_id)
+    )
+    row = cur.fetchone()
+    if row is None: return -1
+    return row[0]
+
 
 
 def line_length(isbn: str = None) -> int:
@@ -253,11 +330,12 @@ def save_changes():
     """
     Commits all changes made to the db.
     """
-    pass
+    conn.commit()
 
 
 def close_connection():
     """
     Closes the cursor and connection.
     """
-    pass
+    cur.close()
+    conn.close()
