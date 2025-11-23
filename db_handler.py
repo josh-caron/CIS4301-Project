@@ -110,7 +110,37 @@ def edit_user(original_account_id: str = None, new_user: User = None):
         original_account_id should have their name updated to "John". If filter_attributes.name = None, then the name should
         not be altered. new_user will never be None, but any attribute not being updated will be None.
     """
-    pass
+    fields = []
+    parameters = []
+
+    if new_user.account_id is not None:
+        fields.append("account_id = ?")
+        parameters.append(new_user.account_id)
+
+    if new_user.name is not None:
+        fields.append("name = ?")
+        parameters.append(new_user.name)
+    if new_user.address is not None:
+        fields.append("address = ?")
+        parameters.append(new_user.address)
+
+    if new_user.phone_number is not None:
+        fields.append("phone_number = ?")
+        parameters.append(new_user.phone_number)
+    if new_user.email is not None:
+        fields.append("email = ?")
+        parameters.append(new_user.email)
+
+    if not fields:
+        return  # Nothing to update
+    parameters.append(original_account_id)
+
+    query = (
+        "UPDATE User "
+        f"SET {', '.join(fields)} "
+        "WHERE account_id = ?"
+    )
+    cur.execute(query, parameters)
 
 
 def checkout_book(isbn: str = None, account_id: str = None):
@@ -167,7 +197,17 @@ def update_waitlist(isbn: str = None):
     """
     isbn - A string containing the ISBN for a book on the waitlist. isbn will never be None.
     """
-    pass
+    cur.execute(
+        "DELETE FROM Waitlist WHERE isbn = ? AND place_in_line = 1",
+        (isbn,)
+    )
+    # Shift all remaining users up by 1 in line
+    cur.execute(
+        "UPDATE Waitlist "
+        "SET place_in_line = place_in_line - 1 "
+        "WHERE isbn = ? AND place_in_line > 1",
+        (isbn,)
+    )
 
 
 def return_book(isbn: str = None, account_id: str = None):
@@ -204,7 +244,12 @@ def grant_extension(isbn: str = None, account_id: str = None):
     isbn - A string containing the ISBN for a book. isbn will never be None.
     account_id - A string containing the account id for a user. account_id will never be None.
     """
-    pass
+    cur.execute(
+        "UPDATE Loan "
+        "SET due_date = DATE_ADD(due_date, INTERVAL 14 DAY) "
+        "WHERE isbn = ? AND account_id = ?",
+        (isbn, account_id)
+    )
 
 
 def get_filtered_books(filter_attributes: Book = None,
