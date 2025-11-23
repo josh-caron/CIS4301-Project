@@ -24,7 +24,46 @@ def row_to_user(row) -> User:
         email=row[4],
     )
 
+def row_to_book(row) -> Book:
+    return Book(
+        isbn=row[0],
+        title=row[1],
+        author=row[2],
+        publication_year=row[3],
+        publisher=row[4],
+        num_owned=row[5],
+    )
 
+def row_to_loan(row) -> Loan:
+    checkout_date = row[2]
+    due_date = row[3]
+
+    return Loan(
+        isbn=row[0],
+        account_id=row[1],
+        checkout_date=checkout_date.isoformat() if checkout_date else None,
+        due_date=due_date.isoformat() if due_date else None,
+    )
+
+def row_to_loan_history(row) -> LoanHistory:
+    checkout_date = row[2]
+    due_date = row[3]
+    return_date = row[4]
+
+    return LoanHistory(
+        isbn=row[0],
+        account_id=row[1],
+        checkout_date=checkout_date.isoformat() if checkout_date else None,
+        due_date=due_date.isoformat() if due_date else None,
+        return_date=return_date.isoformat() if return_date else None,
+    )
+
+def row_to_waitlist(row) -> Waitlist:
+    return Waitlist(
+        isbn=row[0],
+        account_id=row[1],
+        place_in_line=row[2],
+    )
 # helpers -^
 
 def add_book(new_book: Book = None):
@@ -92,7 +131,36 @@ def waitlist_user(isbn: str = None, account_id: str = None) -> int:
 
     returns an integer that is the user's place in line to check out the book.
     """
-    return -1
+    # Check if the user is already on the waitlist
+    cur.execute(
+        "SELECT place_in_line FROM Waitlist WHERE isbn = ? AND account_id = ?",
+        (isbn, account_id)
+    )
+    row = cur.fetchone()
+    if row is not None:
+        return row[0]
+    
+    # If not, get the next place in line
+    cur.execute(
+        "SELECT MAX(place_in_line) "
+        "FROM Waitlist "
+        "WHERE isbn = ?",
+        (isbn,)
+    )
+    (max_place,) = cur.fetchone()
+    if max_place is None:
+        next_place = 1
+    else:
+        next_place = max_place + 1
+    
+    # Insert the user into the waitlist
+    cur.execute(
+        "INSERT INTO Waitlist (isbn, account_id, place_in_line) "
+        "VALUES (?, ?, ?)",
+        (isbn, account_id, next_place)
+    )
+
+    return next_place
 
 
 def update_waitlist(isbn: str = None):
@@ -107,7 +175,28 @@ def return_book(isbn: str = None, account_id: str = None):
     isbn - A string containing the ISBN for the book that the user desires to return. isbn will never be None
     account_id - A string containing the account id for the user that wants to return the book. account_id will never be None
     """
-    pass
+    cur.execute(
+        "SELECT checkout_date, due_date "
+        "FROM Loan "
+        "WHERE isbn = ? AND account_id = ? ",
+        (isbn, account_id)
+    )
+    row = cur.fetchone()
+    checkout_date, due_date = row
+
+    # Add entry to LoanHistory
+    cur.execute(
+        "INSERT INTO LoanHistory (isbn, account_id, checkout_date, due_date, return_date) "
+        "VALUES (?, ?, ?, ?, CURRENT_DATE())",
+        (isbn, account_id, checkout_date, due_date)
+    )
+
+    # Remove entry from Loan
+    cur.execute(
+        "DELETE FROM Loan "
+        "WHERE isbn = ? AND account_id = ? AND checkout_date = ?",
+        (isbn, account_id, checkout_date)
+    )
 
 
 def grant_extension(isbn: str = None, account_id: str = None):
@@ -145,7 +234,48 @@ def get_filtered_books(filter_attributes: Book = None,
     returns a list of Book objects with books that meet the qualifications of the filtered attributes. If no books meet the
         requirements, then an empty list is returned.
     """
-    return []
+    query = "SELECT isbn, title, author, publication_year, publisher, num_owned FROM Book"
+    conditions = []
+    parameters = []
+
+    if filter_attributes.isbn is not None:
+        op = "LIKE" if use_patterns else "="
+        conditions.append(f"isbn {op} ?")
+        parameters.append(filter_attributes.isbn)
+
+    if filter_attributes.title is not None:
+        op = "LIKE" if use_patterns else "="
+        conditions.append(f"title {op} ?")
+        parameters.append(filter_attributes.title)
+
+    if filter_attributes.author is not None:
+        op = "LIKE" if use_patterns else "="
+        conditions.append(f"author {op} ?")
+        parameters.append(filter_attributes.author)
+
+    if filter_attributes.publisher is not None:
+        op = "LIKE" if use_patterns else "="
+        conditions.append(f"publisher {op} ?")
+        parameters.append(filter_attributes.publisher)
+
+    if filter_attributes.num_owned != -1:
+        conditions.append("num_owned = ?")
+        parameters.append(filter_attributes.num_owned)
+
+    if min_publication_year != -1:
+        conditions.append("publication_year >= ?")
+        parameters.append(min_publication_year)
+
+    if max_publication_year != -1:
+        conditions.append("publication_year <= ?")
+        parameters.append(max_publication_year)
+
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+
+    cur.execute(query, parameters)
+    rows = cur.fetchall()
+    return [row_to_book(r) for r in rows]
 
 
 def get_filtered_users(filter_attributes: User = None, use_patterns: bool = False) -> list[User]:
@@ -164,6 +294,7 @@ def get_filtered_users(filter_attributes: User = None, use_patterns: bool = Fals
     returns a list of User objects with users who meet the qualifications of the filters. If no users meet the requirements,
      then an empty list is returned.
     """
+    query = "SELECT account_id, name, address, phone_number, email FROM User"
     conditions = []
     parameters = []
 
@@ -192,7 +323,6 @@ def get_filtered_users(filter_attributes: User = None, use_patterns: bool = Fals
         conditions.append(f"email {operation} ?")
         parameters.append(filter_attributes.email)
 
-    query = "SELECT account_id, name, address, phone_number, email FROM User"
     if conditions:
         query += " WHERE " + " AND ".join(conditions)
 
@@ -228,7 +358,52 @@ def get_filtered_loans(filter_attributes: Loan = None,
     returns a list of Loan objects with loans that meet the qualifications of the filters. If no loans meet the
     requirements, then an empty list is returned.
     """
-    return []
+    query = "SELECT isbn, account_id, checkout_date, due_date FROM Loan"
+    conditions = []
+    parameters = []
+
+    # if exact values are provided
+    if filter_attributes.isbn is not None:
+        conditions.append(f"isbn = ?")
+        parameters.append(filter_attributes.isbn)
+
+    if filter_attributes.account_id is not None:
+        conditions.append(f"account_id = ?")
+        parameters.append(filter_attributes.account_id)
+
+    if filter_attributes.checkout_date is not None:
+        conditions.append(f"checkout_date = ?")
+        parameters.append(filter_attributes.checkout_date)
+
+    if filter_attributes.due_date is not None:
+        conditions.append(f"due_date = ?")
+        parameters.append(filter_attributes.due_date)
+
+    # if instead, range values are provided
+    if min_checkout_date is not None:
+        conditions.append("checkout_date >= ?")
+        parameters.append(min_checkout_date)
+
+    if max_checkout_date is not None:
+        conditions.append("checkout_date <= ?")
+        parameters.append(max_checkout_date)
+    if min_due_date is not None:
+        conditions.append("due_date >= ?")
+        parameters.append(min_due_date)
+
+    if max_due_date is not None:
+        conditions.append("due_date <= ?")
+        parameters.append(max_due_date)
+
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+
+    cur.execute(
+        query, 
+        parameters
+    )
+    rows = cur.fetchall()
+    return [row_to_loan(r) for r in rows]
 
 
 def get_filtered_loan_histories(filter_attributes: LoanHistory = None,
@@ -261,7 +436,64 @@ def get_filtered_loan_histories(filter_attributes: LoanHistory = None,
     returns a list of LoanHistory objects with return entries that meet the qualifications of the filters. If no entries
     meet the requirements, then an empty list is returned
     """
-    return []
+    query = "SELECT isbn, account_id, checkout_date, due_date, return_date FROM LoanHistory"
+    conditions = []
+    parameters = []
+
+    # if exact values are provided
+    if filter_attributes.isbn is not None:
+        conditions.append(f"isbn = ?")
+        parameters.append(filter_attributes.isbn)
+
+    if filter_attributes.account_id is not None:
+        conditions.append(f"account_id = ?")
+        parameters.append(filter_attributes.account_id)
+
+    if filter_attributes.checkout_date is not None:
+        conditions.append(f"checkout_date = ?")
+        parameters.append(filter_attributes.checkout_date)
+
+    if filter_attributes.due_date is not None:
+        conditions.append(f"due_date = ?")
+        parameters.append(filter_attributes.due_date)
+
+    if filter_attributes.return_date is not None:
+        conditions.append(f"return_date = ?")
+        parameters.append(filter_attributes.return_date)
+
+    # if instead, range values are provided
+    if min_checkout_date is not None:
+        conditions.append("checkout_date >= ?")
+        parameters.append(min_checkout_date)
+
+    if max_checkout_date is not None:
+        conditions.append("checkout_date <= ?")
+        parameters.append(max_checkout_date)
+    if min_due_date is not None:
+        conditions.append("due_date >= ?")
+        parameters.append(min_due_date)
+
+    if max_due_date is not None:
+        conditions.append("due_date <= ?")
+        parameters.append(max_due_date)
+    
+    if min_return_date is not None:
+        conditions.append("return_date >= ?")
+        parameters.append(min_return_date)
+
+    if max_return_date is not None:
+        conditions.append("return_date <= ?")
+        parameters.append(max_return_date)
+
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+
+    cur.execute(
+        query, 
+        parameters
+    )
+    rows = cur.fetchall()
+    return [row_to_loan_history(r) for r in rows]
 
 
 def get_filtered_waitlist(filter_attributes: Waitlist = None,
@@ -284,7 +516,41 @@ def get_filtered_waitlist(filter_attributes: Waitlist = None,
     returns a list of Waitlist objects with waitlist entries that meet the qualifications of the filters. If no entries meet
      the requirements, then an empty list is returned.
     """
-    return []
+    query = "SELECT isbn, account_id, place_in_line FROM Waitlist"
+    conditions = []
+    parameters = []
+
+    # if exact values are provided
+    if filter_attributes.isbn is not None:
+        conditions.append(f"isbn = ?")
+        parameters.append(filter_attributes.isbn)
+
+    if filter_attributes.account_id is not None:
+        conditions.append(f"account_id = ?")
+        parameters.append(filter_attributes.account_id)
+
+    if filter_attributes.place_in_line != -1:
+        conditions.append(f"place_in_line = ?")
+        parameters.append(filter_attributes.place_in_line)
+
+    # if instead, range values are provided
+    if min_place_in_line != -1:
+        conditions.append("place_in_line >= ?")
+        parameters.append(min_place_in_line)
+
+    if max_place_in_line != -1:
+        conditions.append("place_in_line <= ?")
+        parameters.append(max_place_in_line)
+
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+
+    cur.execute(
+        query, 
+        parameters
+    )
+    rows = cur.fetchall()
+    return [row_to_waitlist(r) for r in rows]
 
 
 def number_in_stock(isbn: str = None) -> int:
@@ -295,7 +561,25 @@ def number_in_stock(isbn: str = None) -> int:
         calculated as how many copies the branch owns minus how many copies are checked out to users. If the library does
         not own the book, then -1 should be returned.
     """
-    return 0
+    # Get the total num_owned
+    cur.execute(
+        "SELECT num_owned FROM Book WHERE isbn = ?",
+        (isbn,)
+    )
+    row = cur.fetchone()
+    if row is None:
+        return -1
+
+    num_owned = row[0]
+
+    # Count how many copies are currently checked out
+    cur.execute(
+        "SELECT COUNT(*) FROM Loan WHERE isbn = ?",
+        (isbn,)
+    )
+    (num_checked_out,) = cur.fetchone()
+
+    return num_owned - num_checked_out
 
 
 def place_in_line(isbn: str = None, account_id: str = None) -> int:
@@ -323,7 +607,12 @@ def line_length(isbn: str = None) -> int:
     returns how many people are on the waitlist for the book with the corresponding ISBN. e.g. if there are 5 people on the
         waitlist for a book, 5 should be returned. If there is no waitlist for the book, then 0 should be returned.
     """
-    return 0
+    cur.execute(
+        "SELECT COUNT(*) FROM Waitlist WHERE isbn = ?",
+        (isbn,)
+    )
+    (count,) = cur.fetchone()
+    return count
 
 
 def save_changes():
